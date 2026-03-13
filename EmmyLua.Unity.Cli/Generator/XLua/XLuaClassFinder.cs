@@ -19,14 +19,39 @@ public class XLuaClassFinder
     /// </summary>
     public List<INamedTypeSymbol> GetAllValidTypes(Compilation compilation)
     {
+        var luaCallCSharpMembers = CollectLuaCallCSharpTypes(compilation, includeDefaultTypes: true);
+
+        return luaCallCSharpMembers
+            .Where(type => IsValidType(type))
+            .ToList();
+    }
+
+    /// <summary>
+    /// 获取当前编译单元内所有有效的 public 类型（忽略 LuaCallCSharp 配置）
+    /// </summary>
+    public List<INamedTypeSymbol> GetAllPublicTypes(Compilation compilation)
+    {
+        var allPublicTypes = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
+        var luaCallCSharpTypes = CollectLuaCallCSharpTypes(compilation, includeDefaultTypes: false);
+
+        AddDefaultTypesOnce(compilation, allPublicTypes);
+        CollectTypesFromNamespace(compilation.Assembly.GlobalNamespace, allPublicTypes);
+
+        return allPublicTypes
+            .Where(type => IsValidType(type) &&
+                           !IsEditorRelatedType(type) &&
+                           IsGenericClassInLuaCallCSharpScope(type, luaCallCSharpTypes))
+            .ToList();
+    }
+
+    /// <summary>
+    /// 收集 LuaCallCSharp 范围内的类型
+    /// </summary>
+    private HashSet<INamedTypeSymbol> CollectLuaCallCSharpTypes(Compilation compilation, bool includeDefaultTypes)
+    {
         var luaCallCSharpMembers = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
 
-        // 添加默认导出的类型（只添加一次）
-        if (!_defaultTypesAdded)
-        {
-            AddDefaultTypes(compilation, luaCallCSharpMembers);
-            _defaultTypesAdded = true;
-        }
+        if (includeDefaultTypes) AddDefaultTypesOnce(compilation, luaCallCSharpMembers);
 
         foreach (var syntaxTree in compilation.SyntaxTrees)
         {
@@ -69,9 +94,7 @@ public class XLuaClassFinder
             }
         }
 
-        return luaCallCSharpMembers
-            .Where(type => IsValidType(type))
-            .ToList();
+        return luaCallCSharpMembers;
     }
 
     /// <summary>
@@ -91,6 +114,37 @@ public class XLuaClassFinder
             var typeSymbol = compilation.GetTypeByMetadataName(typeName);
             if (typeSymbol != null) types.Add(typeSymbol);
         }
+    }
+
+    /// <summary>
+    /// 仅首次添加默认导出类型，避免重复
+    /// </summary>
+    private void AddDefaultTypesOnce(Compilation compilation, HashSet<INamedTypeSymbol> types)
+    {
+        if (_defaultTypesAdded)
+            return;
+
+        AddDefaultTypes(compilation, types);
+        _defaultTypesAdded = true;
+    }
+
+    /// <summary>
+    /// 递归收集命名空间中的类型（包含嵌套类型）
+    /// </summary>
+    private void CollectTypesFromNamespace(INamespaceSymbol namespaceSymbol, HashSet<INamedTypeSymbol> result)
+    {
+        foreach (var type in namespaceSymbol.GetTypeMembers()) CollectTypeAndNestedTypes(type, result);
+        foreach (var childNamespace in namespaceSymbol.GetNamespaceMembers())
+            CollectTypesFromNamespace(childNamespace, result);
+    }
+
+    /// <summary>
+    /// 收集当前类型及其所有嵌套类型
+    /// </summary>
+    private void CollectTypeAndNestedTypes(INamedTypeSymbol typeSymbol, HashSet<INamedTypeSymbol> result)
+    {
+        result.Add(typeSymbol);
+        foreach (var nestedType in typeSymbol.GetTypeMembers()) CollectTypeAndNestedTypes(nestedType, result);
     }
 
     /// <summary>
@@ -199,5 +253,94 @@ public class XLuaClassFinder
             return false;
 
         return true;
+    }
+
+    /// <summary>
+    /// 在 export-all 模式下，仅保留 LuaCallCSharp 范围内的泛型类
+    /// </summary>
+    private static bool IsGenericClassInLuaCallCSharpScope(INamedTypeSymbol type, HashSet<INamedTypeSymbol> luaCallCSharpTypes)
+    {
+        if (type.TypeKind != TypeKind.Class || !type.IsGenericType)
+            return true;
+
+        if (IsDefaultGenericType(type))
+            return true;
+
+        if (luaCallCSharpTypes.Contains(type))
+            return true;
+
+        var originalDefinition = type.OriginalDefinition;
+        if (luaCallCSharpTypes.Contains(originalDefinition))
+            return true;
+
+        return luaCallCSharpTypes.Any(scopeType =>
+            SymbolEqualityComparer.Default.Equals(scopeType.OriginalDefinition, originalDefinition));
+    }
+
+    private static bool IsDefaultGenericType(INamedTypeSymbol type)
+    {
+        if (!type.IsGenericType)
+            return false;
+
+        var namespaceName = type.ContainingNamespace?.ToDisplayString();
+        if (!string.Equals(namespaceName, "System.Collections.Generic", StringComparison.Ordinal))
+            return false;
+
+        return type.MetadataName is "List`1" or "Dictionary`2";
+    }
+
+    /// <summary>
+    /// 是否为 Editor 相关类型（仅用于 --xlua-export-all 路径）
+    /// </summary>
+    private static bool IsEditorRelatedType(INamedTypeSymbol type)
+    {
+        if (IsUnityEditorNamespace(type.ContainingNamespace?.ToDisplayString()))
+            return true;
+
+        if (IsEditorAssemblyName(type.ContainingAssembly?.Name))
+            return true;
+
+        foreach (var location in type.Locations)
+            if (location.IsInMetadata && IsEditorAssemblyName(location.MetadataModule?.Name))
+                return true;
+
+        return false;
+    }
+
+    private static bool IsUnityEditorNamespace(string? namespaceName)
+    {
+        if (string.IsNullOrWhiteSpace(namespaceName))
+            return false;
+
+        return namespaceName.Equals("UnityEditor", StringComparison.OrdinalIgnoreCase) ||
+               namespaceName.StartsWith("UnityEditor.", StringComparison.OrdinalIgnoreCase) ||
+               namespaceName.EndsWith(".Editor", StringComparison.OrdinalIgnoreCase) ||
+               namespaceName.EndsWith(".Tests", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsEditorAssemblyName(string? assemblyName)
+    {
+        if (string.IsNullOrWhiteSpace(assemblyName))
+            return false;
+
+        var normalizedName = assemblyName.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)
+            ? assemblyName[..^4]
+            : assemblyName;
+
+        if (normalizedName.Equals("UnityEditor", StringComparison.OrdinalIgnoreCase) ||
+            normalizedName.StartsWith("UnityEditor.", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (normalizedName.EndsWith(".Editor", StringComparison.OrdinalIgnoreCase) ||
+            normalizedName.EndsWith(".Tests", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (normalizedName.StartsWith("Assembly-CSharp-Editor", StringComparison.OrdinalIgnoreCase) ||
+            normalizedName.StartsWith("Assembly-CSharp-Tests", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        return normalizedName.StartsWith("Assembly-", StringComparison.OrdinalIgnoreCase) &&
+               (normalizedName.Contains("Editor", StringComparison.OrdinalIgnoreCase) ||
+                normalizedName.Contains("Tests", StringComparison.OrdinalIgnoreCase));
     }
 }

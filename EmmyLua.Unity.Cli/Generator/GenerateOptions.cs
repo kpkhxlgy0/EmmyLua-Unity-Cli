@@ -23,6 +23,10 @@ public class GenerateOptions
     [Option('e', "export", Required = false, HelpText = "Export type (Json/Lua).")]
     public LuaExportType ExportType { get; set; } = LuaExportType.None;
 
+    [Option("xlua-export-all", Required = false,
+        HelpText = "XLua only: export all public types from compilation, ignoring LuaCallCSharp list.")]
+    public bool XLuaExportAll { get; set; } = false;
+
     /// <summary>
     /// Validate the options
     /// </summary>

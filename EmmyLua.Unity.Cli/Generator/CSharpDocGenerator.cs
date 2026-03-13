@@ -29,7 +29,10 @@ public class CSharpDocGenerator(GenerateOptions o)
         {
             Console.WriteLine($"Opening solution: {slnPath}");
             var compilations = await CSharpWorkspace.OpenSolutionAsync(slnPath, msbuildProperties);
-            var analyzer = new CSharpAnalyzer();
+            var analyzer = new CSharpAnalyzer
+            {
+                ExcludeOperatorMethods = o.BindingType == LuaBindingType.XLua && o.XLuaExportAll
+            };
             Console.WriteLine("Analyzing types...");
 
             var symbolCount = 0;

@@ -1,4 +1,4 @@
-﻿using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis;
 
 namespace EmmyLua.Unity.Generator;
 
@@ -7,6 +7,11 @@ public class CSharpAnalyzer
     private List<CSType> CsTypes { get; } = [];
 
     private Dictionary<string, List<CSTypeMethod>> ExtendMethods { get; } = [];
+
+    /// <summary>
+    /// Whether to exclude operator methods (op_*, conversion operators) during analysis.
+    /// </summary>
+    public bool ExcludeOperatorMethods { get; set; }
 
     public void AnalyzeType(INamedTypeSymbol namedType)
     {
@@ -88,6 +93,8 @@ public class CSharpAnalyzer
     private void AnalyzeTypeMethods(IMethodSymbol methodSymbol, IHasMethods csClassType)
     {
         if (methodSymbol.Name.StartsWith("get_") || methodSymbol.Name.StartsWith("set_")) return;
+        if (ExcludeOperatorMethods &&
+            methodSymbol.MethodKind is MethodKind.UserDefinedOperator or MethodKind.Conversion) return;
 
         var method = new CSTypeMethod
         {

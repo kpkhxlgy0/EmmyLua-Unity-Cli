@@ -8,3 +8,5 @@ unity.sln.DotSettings.user
 .vscode
 .vs
 build
+publish
+.claude/settings.local.json
