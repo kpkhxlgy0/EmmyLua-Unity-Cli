@@ -8,7 +8,8 @@ public class CSharpDocGenerator(GenerateOptions o)
 {
     public async Task<int> Run()
     {
-        // Validate options
+        var inputSolution = o.Solution;
+        // Validate options (also resolves Solution to the newest sibling .sln/.slnx)
         var validationErrors = o.Validate();
         if (validationErrors.Count > 0)
         {
@@ -18,6 +19,8 @@ public class CSharpDocGenerator(GenerateOptions o)
         }
 
         var slnPath = o.Solution;
+        if (!string.Equals(inputSolution, slnPath, StringComparison.OrdinalIgnoreCase))
+            Console.WriteLine($"Resolved solution: {inputSolution} -> {slnPath} (newer sibling preferred)");
         var msbuildProperties = new Dictionary<string, string>();
         foreach (var property in o.Properties)
         {

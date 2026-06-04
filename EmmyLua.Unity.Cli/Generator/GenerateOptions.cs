@@ -8,7 +8,7 @@ namespace EmmyLua.Unity.Generator;
 // ReSharper disable once ClassNeverInstantiated.Global
 public class GenerateOptions
 {
-    [Option('s', "solution", Required = true, HelpText = "The path to the solution file(.sln).")]
+    [Option('s', "solution", Required = true, HelpText = "The path to the solution file (.sln or .slnx).")]
     public string Solution { get; set; } = string.Empty;
 
     [Option('p', "properties", Required = false, HelpText = "The MSBuild properties (format: key=value).")]
@@ -35,11 +35,19 @@ public class GenerateOptions
         var errors = new List<string>();
 
         if (string.IsNullOrWhiteSpace(Solution))
+        {
             errors.Add("Solution path is required.");
-        else if (!File.Exists(Solution))
-            errors.Add($"Solution file not found: {Solution}");
-        else if (!Solution.EndsWith(".sln", StringComparison.OrdinalIgnoreCase))
-            errors.Add("Solution path must point to a .sln file.");
+        }
+        else
+        {
+            var resolved = ResolveSolutionPath(Solution);
+            if (!File.Exists(resolved))
+                errors.Add($"Solution file not found: {Solution}");
+            else if (!IsSupportedSolutionExtension(resolved))
+                errors.Add("Solution path must point to a .sln or .slnx file.");
+            else
+                Solution = resolved;
+        }
 
         if (string.IsNullOrWhiteSpace(Output)) errors.Add("Output path is required.");
 
@@ -51,6 +59,35 @@ public class GenerateOptions
                 errors.Add($"Invalid property format: {property}. Expected format: key=value");
 
         return errors;
+    }
+
+    private static bool IsSupportedSolutionExtension(string path) =>
+        path.EndsWith(".sln", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Resolve the actual solution file to open. If both .sln and .slnx exist with the same
+    /// base name, pick the most recently modified one. Otherwise return whichever exists,
+    /// falling back to the original input when neither sibling can be found.
+    /// </summary>
+    private static string ResolveSolutionPath(string input)
+    {
+        if (!IsSupportedSolutionExtension(input)) return input;
+
+        var dir = Path.GetDirectoryName(input);
+        if (string.IsNullOrEmpty(dir)) dir = ".";
+        var stem = Path.GetFileNameWithoutExtension(input);
+        var sln = Path.Combine(dir, stem + ".sln");
+        var slnx = Path.Combine(dir, stem + ".slnx");
+
+        var slnExists = File.Exists(sln);
+        var slnxExists = File.Exists(slnx);
+
+        if (slnExists && slnxExists)
+            return File.GetLastWriteTimeUtc(slnx) >= File.GetLastWriteTimeUtc(sln) ? slnx : sln;
+        if (slnxExists) return slnx;
+        if (slnExists) return sln;
+        return input;
     }
 }
 
