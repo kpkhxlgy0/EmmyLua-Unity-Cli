@@ -66,17 +66,28 @@ public class GenerateOptions
         path.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Resolve the actual solution file to open. If both .sln and .slnx exist with the same
-    /// base name, pick the most recently modified one. Otherwise return whichever exists,
-    /// falling back to the original input when neither sibling can be found.
+    /// Resolve the actual solution file to open. The input is treated as a stem when it does
+    /// not already end in .sln/.slnx (e.g. "D:/repo/sg" resolves "sg.sln"/"sg.slnx" beside it).
+    /// When both .sln and .slnx exist for the stem, the most recently modified one is picked.
+    /// Falls back to the original input when neither sibling can be found.
     /// </summary>
     private static string ResolveSolutionPath(string input)
     {
-        if (!IsSupportedSolutionExtension(input)) return input;
-
-        var dir = Path.GetDirectoryName(input);
+        string dir, stem;
+        if (IsSupportedSolutionExtension(input))
+        {
+            dir = Path.GetDirectoryName(input) ?? "";
+            stem = Path.GetFileNameWithoutExtension(input);
+        }
+        else
+        {
+            // No recognized extension — treat the whole input as <dir>/<stem>.
+            dir = Path.GetDirectoryName(input) ?? "";
+            stem = Path.GetFileName(input);
+        }
         if (string.IsNullOrEmpty(dir)) dir = ".";
-        var stem = Path.GetFileNameWithoutExtension(input);
+        if (string.IsNullOrEmpty(stem)) return input;
+
         var sln = Path.Combine(dir, stem + ".sln");
         var slnx = Path.Combine(dir, stem + ".slnx");
 
